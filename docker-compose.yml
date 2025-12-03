@@ -12,6 +12,15 @@ services:
       - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
+      # Mount initialization script for Kestra DB
+      - ./infra/db-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dmaw_net
 
   etl:
     build:
@@ -21,13 +30,53 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
       - ./data:/data
       - ./scripts:/app/scripts
       - ./infra/etl/requirements.txt:/app/requirements.txt
-    # No default commands yet. For testing, run the etl service with specific parameters.
-    # example run:
-    # docker-compose run --rm etl --path /data/raw/sample.csv --table_name orders_raw --user postgres --password postgres --host db --port 5432 --db bronze --use_copy
+    networks:
+      - dmaw_net
+    # Command is set in Dockerfile to tail -f /dev/null
+
+  kestra:
+    image: kestra/kestra:latest
+    container_name: dmaw_kestra
+    environment:
+      KESTRA_CONFIGURATION: |
+        kestra:
+          repository:
+            type: postgres
+            url: jdbc:postgresql://db:5432/kestra
+            username: postgres
+            password: postgres
+          queue:
+            type: postgres
+            url: jdbc:postgresql://db:5432/kestra
+            username: postgres
+            password: postgres
+          storage:
+            type: local
+            base-path: /app/storage
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+      - ./scripts:/app/scripts
+      - kestra_data:/app/storage
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      db:
+        condition: service_healthy
+    command: server local
+    networks:
+      - dmaw_net
+
 volumes:
   db_data:
+  kestra_data:
+
+networks:
+  dmaw_net:
+    driver: bridge
