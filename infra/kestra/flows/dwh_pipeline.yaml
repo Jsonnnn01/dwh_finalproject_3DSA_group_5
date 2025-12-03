@@ -1,0 +1,118 @@
+id: dwh_pipeline
+namespace: com.dmaw
+description: "End-to-End Data Warehouse Pipeline: Ingest -> Validate -> Silver -> Gold"
+
+inputs:
+  - id: db_host
+    type: STRING
+    defaults: "db"
+  - id: db_port
+    type: STRING
+    defaults: "5432"
+  - id: db_user
+    type: STRING
+    defaults: "postgres"
+  - id: db_password
+    type: STRING
+    defaults: "postgres"
+  - id: db_name
+    type: STRING
+    defaults: "bronze"
+
+tasks:
+  # ===========================================================================
+  # 1. INGESTION
+  # ===========================================================================
+  - id: list_files
+    type: io.kestra.plugin.scripts.shell.Commands
+    docker:
+      image: docker:cli
+      networkMode: dmaw_net
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+    commands:
+      - |
+        # Execute Python script inside the 'dmaw_etl' container which has access to /data
+        docker exec dmaw_etl python3 -c '
+        import os
+        import json
+        base_path = "/data/raw"
+        files = []
+        for root, dirs, filenames in os.walk(base_path):
+            for f in filenames:
+                if f.startswith("."): continue
+                full_path = os.path.join(root, f)
+                filename_no_ext = os.path.splitext(f)[0]
+                table_name = filename_no_ext.lower().replace(" ", "_") + "_raw"
+                files.append({
+                    "path": full_path,
+                    "table_name": table_name
+                })
+        print(json.dumps(files))
+        '
+  - id: ingest_files
+    type: io.kestra.core.tasks.flows.ForEach
+    values: "{{ outputs.list_files.stdout }}"
+    tasks:
+      - id: run_ingest_script
+        type: io.kestra.plugin.scripts.shell.Commands
+        docker:
+          image: docker:cli
+          networkMode: dmaw_net
+          volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+        commands:
+          - |
+            FILE_PATH="{{ json(taskrun.value).path }}"
+            TABLE_NAME="{{ json(taskrun.value).table_name }}"
+            echo "Ingesting $FILE_PATH into $TABLE_NAME..."
+            docker exec dmaw_etl python3 /app/scripts/ingest/ingest_data.py \
+              --path "$FILE_PATH" \
+              --table_name "$TABLE_NAME" \
+              --user "{{ inputs.db_user }}" \
+              --password "{{ inputs.db_password }}" \
+              --host "{{ inputs.db_host }}" \
+              --port "{{ inputs.db_port }}" \
+              --db "{{ inputs.db_name }}" \
+              --use_copy
+  # ===========================================================================
+  # 2. VALIDATION & TRANSFORM
+  # ===========================================================================
+  - id: run_sql_scripts
+    type: io.kestra.plugin.scripts.shell.Commands
+    docker:
+      image: docker:cli
+      networkMode: dmaw_net
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+    commands:
+      - |
+        run_sql() {
+          echo "Running $1..."
+          docker exec -e PGPASSWORD="{{ inputs.db_password }}" dmaw_etl \
+            psql -h {{ inputs.db_host }} -U {{ inputs.db_user }} -d {{ inputs.db_name }} -f "/app/$1"
+        }
+        # Initialize DQ
+        run_sql "scripts/ingest/transform/silver_layer/00_dq_base_tables.sql"
+        # Validations
+        run_sql "scripts/ingest/transform/silver_layer/01_campaign_validation.sql"
+        run_sql "scripts/ingest/transform/silver_layer/01_orders_validation_enhanced.sql"
+        run_sql "scripts/ingest/transform/silver_layer/02_merchant_validation.sql"
+        run_sql "scripts/ingest/transform/silver_layer/03_staff_validation.sql"
+        run_sql "scripts/ingest/transform/silver_layer/04_user_validation.sql"
+        run_sql "scripts/ingest/transform/silver_layer/05_user_job_validation.sql"
+        run_sql "scripts/ingest/transform/silver_layer/06_user_credit_card_validation.sql"
+        run_sql "scripts/ingest/transform/silver_layer/07_product_list_validation.sql"
+        run_sql "scripts/ingest/transform/silver_layer/08_order_delays_validation.sql"
+        run_sql "scripts/ingest/transform/silver_layer/09_orders_validation.sql"
+        run_sql "scripts/ingest/transform/silver_layer/10_order_with_merchant_validation.sql"
+        run_sql "scripts/ingest/transform/silver_layer/11_line_item_prices_validation.sql"
+        run_sql "scripts/ingest/transform/silver_layer/11_line_item_prices_validation_enhanced.sql"
+        run_sql "scripts/ingest/transform/silver_layer/12_line_item_products_validation.sql"
+        # DQ Views
+        run_sql "scripts/ingest/transform/silver_layer/99_dq_views.sql"
+        run_sql "scripts/ingest/transform/silver_layer/silver_dq_summary_view.sql"
+        # Silver Build
+        run_sql "scripts/ingest/transform/silver_layer/silver_build.sql"
+        # Gold Build
+        run_sql "scripts/ingest/transform/gold_layer.sql"
