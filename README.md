@@ -35,8 +35,9 @@ To run the pipeline, you must have the following installed:
 
 1.  **Download the repository**
     Clone or download this repository.
+    **for data, if error rises download from this link** https://drive.google.com/drive/folders/1nuLa1Chepulb6ewbPmtRifycDPRFr05n?usp=drive_link
 
-2.  **Prepare the Environment**
+3.  **Prepare the Environment**
     Ensure your folder structure looks like this:
     ```text
     .
@@ -45,6 +46,9 @@ To run the pipeline, you must have the following installed:
     ├── scripts/               # Python & SQL Scripts
     ├── infra/                 # Docker config
     ├── docker-compose.yaml    # Docker Orchestration
+    ├── Dockerfile             # Docker instructions
+    ├── plugins                # plugins, if to be added in the future
+    ├── License                # License
     └── README.md
     ```
 just download it as is and you wont run into any problems, after downloading, put the project folder in your home folder on linux
