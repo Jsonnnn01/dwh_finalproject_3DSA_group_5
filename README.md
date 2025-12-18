@@ -29,7 +29,8 @@ This project ingests raw data from multiple formats (CSV, JSON, Parquet, Excel, 
 To run the pipeline, you must have the following installed:
 * **Docker Desktop** (Installed & Running with WSL 2 enabled).
 * **pgAdmin 4** (Optional, for viewing data schemas).
-
+* **Data** (in case of complications involving data on github, download directly on drive to preserve integrity)
+  
 ### 2. Installation & Setup
 
 1.  **Download the repository**
